@@ -32,7 +32,7 @@ pkgs.mkShell {
     echo "Usage:"
     echo "  sbox-run                  - Automatic build and background startup of the VM"
     echo "  sbox-connect              - Interactive login to the shared tmux VM session"
-    echo "  sbox-connect --run 'cmd'  - Send command for execution in tmux"
+    echo "  sbox-connect --send 'cmd' - Send keys/commands to tmux"
     echo "  sbox-connect --read       - View current tmux text screen"
     echo "  sbox-connect --exec 'cmd' - Quiet execution of command in VM shell"
     echo "============================================================"

@@ -7,34 +7,6 @@ source "${VM_DIR}/sbox-root"
 # Strict verification of project initialization (automatically exports PROJECT_DIR and RUNTIME_DIR)
 verify_project_initialization
 
-# Function to check if the argument is a tmux key or shortcut
-is_key() {
-    local arg="$1"
-    case "$arg" in
-        # Arrows and basic control keys
-        Enter|Space|Tab|Escape|Up|Down|Left|Right|BSpace|BTab)
-            return 0
-            ;;
-        # Navigation (all official tmux aliases are supported)
-        Home|End|PageUp|PgUp|PPage|PageDown|PgDn|NPage)
-            return 0
-            ;;
-        # Editing (IC/DC abbreviations and full names are supported)
-        Insert|IC|Delete|DC)
-            return 0
-            ;;
-    esac
-    # Check functional keys F1-F12
-    if [[ "$arg" =~ ^F([1-9]|1[0-2])$ ]]; then
-        return 0
-    fi
-    # Check shortcuts like C-x, M-x, S-Up, C-M-x (Ctrl, Shift, Alt/Meta prefixes are supported)
-    if [[ "$arg" =~ ^[CMS]-[a-zA-Z0-9]+$ ]] || [[ "$arg" =~ ^C-M-[a-zA-Z0-9]+$ ]]; then
-        return 0
-    fi
-    return 1
-}
-
 # Read the dynamically negotiated SSH port
 if [ -f "$RUNTIME_DIR/ssh_port" ]; then
     SSH_PORT=$(cat "$RUNTIME_DIR/ssh_port")
@@ -69,32 +41,31 @@ if [ $# -eq 0 ]; then
 fi
 
 case "$1" in
-    --run|-r)
+    --send|-s)
         shift
         if [ $# -eq 0 ]; then
-            echo "Error: Specify keys or text to send. Example: sbox-connect --run C-x C-f"
-            echo "Or to execute a command: sbox-connect --run 'ls -la'"
+            echo "Error: Specify keys or text to send. Example: sbox-connect --send 'ls -la'"
+            echo "Or to send keys: sbox-connect --send -K C-x C-s"
             exit 1
         fi
 
-        # Build a chain of tmux commands to execute in a single SSH request
-        TMUX_CMD=""
-
-        # If exactly one argument is passed, and it is not a special key,
-        # then we consider it a full console command (alsalib behavior)
-        # and automatically append Enter at the end.
-        if [ $# -eq 1 ] && ! is_key "$1"; then
+        targ="-l" # default mode is literal (-l)
+        # Check if we should use the single-command shortcut:
+        # If there is exactly one argument, and it is not a mode switch flag (-l or -K)
+        if [ $# -eq 1 ] && [ "$1" != "-l" ] && [ "$1" != "-K" ]; then
             TMUX_CMD="tmux send-keys -t shared -l $(printf '%q' "$1") ; tmux send-keys -t shared Enter"
         else
+            TMUX_CMD=""
             for arg in "$@"; do
-                if [ -n "$TMUX_CMD" ]; then
-                    TMUX_CMD="$TMUX_CMD ; "
+                if [ "$arg" = "-l" ]; then
+                    targ="-l"
+                    continue
+                elif [ "$arg" = "-K" ]; then
+                    targ="-K"
+                    continue
                 fi
-                if is_key "$arg"; then
-                    TMUX_CMD="$TMUX_CMD tmux send-keys -t shared $(printf '%q' "$arg")"
-                else
-                    TMUX_CMD="$TMUX_CMD tmux send-keys -t shared -l $(printf '%q' "$arg")"
-                fi
+
+                TMUX_CMD="${TMUX_CMD}tmux send-keys -t shared $targ $(printf '%q' "$arg"); "
             done
         fi
 
@@ -109,18 +80,16 @@ case "$1" in
     --exec|-e)
         echo "Warning: --exec mode is temporarily disabled to prevent excessive resource limits consumption." >&2
         exit 1
-        # if [ -z "${2:-}" ]; then
-        #     echo "Error: Specify command to execute. Example: sbox-connect --exec 'whoami'"
-        #     exit 1
-        # fi
-        # # Executes command directly in VM shell
-        # ssh $SSH_OPTS user@127.0.0.1 "$2"
-        # ;;
+        ;;
     *)
         echo "Unknown parameter: $1"
         echo "Usage:"
         echo "  sbox-connect                 - Interactive tmux login"
-        echo "  sbox-connect --run 'cmd'     - Print and execute command in tmux"
+        echo "  sbox-connect --send 'cmd'    - Send keys/commands to tmux"
+        echo "                                 Options inside --send:"
+        echo "                                   -l : switch to literal text mode (default)"
+        echo "                                   -K : switch to special keys mode"
+        echo "                                 Example: sbox-connect --send 'Hello' -K Enter"
         echo "  sbox-connect --read          - Read current tmux screen"
         echo "  sbox-connect --exec 'cmd'    - Execute command directly in VM"
         exit 1

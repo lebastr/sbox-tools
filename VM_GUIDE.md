@@ -37,24 +37,24 @@ sbox-connect
 * **Session persistence:** If you close the terminal or lose connection, all processes inside the VM will continue running. The next time you run `sbox-connect`, you will return exactly to where you left off.
 * **Pair Programming:** Multiple terminals on the host (both yours and the AI agent's) can connect to the same session simultaneously and see the shared screen in real-time.
 
-### B. Programmatic input and hotkeys (`--run`)
-Sends keypresses, Emacs hotkeys, or text commands directly to the active `tmux` session. Supports smart translation and **full support for Cyrillic (UTF-8)** without encoding issues:
+### B. Programmatic input and hotkeys (`--send`)
+Sends text, Emacs hotkeys, or commands directly to the active `tmux` session. By default, all arguments are sent literally. You can explicitly switch to sending special keys using the `-K` option:
 
-1. **Console commands (auto-Enter)** — if exactly one text argument is passed, the script will type it literally and automatically press `Enter`:
+1. **Console commands (auto-Enter)** — if exactly one text argument is passed (without `-l` or `-K` flags), it behaves as a shortcut that types the text literally and automatically presses `Enter`:
    ```bash
-   sbox-connect --run "ls -la"
-   sbox-connect --run "make test"
+   sbox-connect --send "ls -la"
+   sbox-connect --send "make test"
    ```
-2. **Hotkeys (no auto-Enter)** — pass key combinations without quotes as separate arguments:
+2. **Hotkeys and special keys (using `-K`)** — switch to special keys mode to pass key combinations:
    ```bash
-   sbox-connect --run C-x C-f         # Open file search dialog in Emacs
-   sbox-connect --run C-x C-s         # Save buffer in Emacs
-   sbox-connect --run C-g             # Cancel current operation in Emacs
+   sbox-connect --send -K C-x C-f         # Open file search dialog in Emacs
+   sbox-connect --send -K C-x C-s         # Save buffer in Emacs
+   sbox-connect --send -K C-g             # Cancel current operation in Emacs
    ```
-3. **Mixed input** — chain keys, text, and manual `Enter` together:
+3. **Mixed input (switching between `-l` and `-K`)** — send literal text and special keys in a single command chain:
    ```bash
-   sbox-connect --run C-x C-f "test.org" Enter
-   sbox-connect --run "Hello, Sasha Djan!" Enter
+   sbox-connect --send -K C-x C-f -l "test.org" -K Enter
+   sbox-connect --send -l "Hello world" -K Enter
    ```
 
 ### C. Reading the session screen (`--read`)
@@ -64,6 +64,6 @@ sbox-connect --read
 ```
 
 > [!TIP]
-> **Automation Details (`--run` vs `--read`):**
-> * The `--run` mode (sending commands) automatically initializes and prepares the `shared` pane in tmux for input before sending.
-> * The `--read` mode (reading the screen) strictly requires the `shared` session to be already active (since it captures the pane). If you want to read the screen immediately after the VM starts, first run any command via `--run` or enter the interactive mode.
+> **Automation Details (`--send` vs `--read`):**
+> * The `--send` mode (sending commands) automatically initializes and prepares the `shared` pane in tmux for input before sending.
+> * The `--read` mode (reading the screen) strictly requires the `shared` session to be already active (since it captures the pane). If you want to read the screen immediately after the VM starts, first run any command via `--send` or enter the interactive mode.
