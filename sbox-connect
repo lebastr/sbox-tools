@@ -50,24 +50,18 @@ case "$1" in
         fi
 
         targ="-l" # default mode is literal (-l)
-        # Check if we should use the single-command shortcut:
-        # If there is exactly one argument, and it is not a mode switch flag (-l or -K)
-        if [ $# -eq 1 ] && [ "$1" != "-l" ] && [ "$1" != "-K" ]; then
-            TMUX_CMD="tmux send-keys -t shared -l $(printf '%q' "$1") ; tmux send-keys -t shared Enter"
-        else
-            TMUX_CMD=""
-            for arg in "$@"; do
-                if [ "$arg" = "-l" ]; then
-                    targ="-l"
-                    continue
-                elif [ "$arg" = "-K" ]; then
-                    targ="-K"
-                    continue
-                fi
+        TMUX_CMD=""
+        for arg in "$@"; do
+            if [ "$arg" = "-l" ]; then
+                targ="-l"
+                continue
+            elif [ "$arg" = "-K" ]; then
+                targ="-K"
+                continue
+            fi
 
-                TMUX_CMD="${TMUX_CMD}tmux send-keys -t shared $targ $(printf '%q' "$arg"); "
-            done
-        fi
+            TMUX_CMD="${TMUX_CMD}tmux send-keys -t shared $targ -- $(printf \'%q\' "$arg"); "
+        done
 
         # Ensure the shared session exists before sending keys
         ssh $SSH_OPTS user@127.0.0.1 "$INIT_TMUX ; $TMUX_CMD"
