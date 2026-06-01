@@ -1,0 +1,4 @@
+# Local virtual machine runtime (disks, keys, logs, shared folder)
+.sbox-runtime/
+.sbox-root
+result

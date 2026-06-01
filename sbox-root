@@ -1,0 +1,32 @@
+# sbox-root — Sandbox (sbox) project root discovery library
+
+# Function to find project root by strict marker file
+find_project_root() {
+    local current_dir="$PWD"
+    while [ "$current_dir" != "/" ]; do
+        if [ -f "$current_dir/.sbox-root" ]; then
+            echo "$current_dir"
+            return 0
+        fi
+        current_dir=$(dirname "$current_dir")
+    done
+    return 1
+}
+
+verify_project_initialization() {
+    if ! PROJECT_DIR=$(find_project_root); then
+        echo "================================================================" >&2
+        echo "❌ ERROR: Project root for running sbox is not initialized!" >&2
+        echo "================================================================" >&2
+        echo "Could not find '.sbox-root' marker file up the directory tree from:" >&2
+        echo "  $PWD" >&2
+        echo "" >&2
+        echo "To initialize this project to work with the sandbox:" >&2
+        echo "  1. Go to the root directory of your project." >&2
+        echo "  2. Run the initialization command:" >&2
+        echo "     sbox-run --init" >&2
+        echo "================================================================" >&2
+        exit 1
+    fi
+    RUNTIME_DIR="$PROJECT_DIR/.sbox-runtime"
+}

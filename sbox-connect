@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Source the Sandbox (sbox) root directory discovery library
+source "${VM_DIR}/sbox-root"
+
+# Strict verification of project initialization (automatically exports PROJECT_DIR and RUNTIME_DIR)
+verify_project_initialization
+
+# Function to check if the argument is a tmux key or shortcut
+is_key() {
+    local arg="$1"
+    case "$arg" in
+        # Arrows and basic control keys
+        Enter|Space|Tab|Escape|Up|Down|Left|Right|BSpace|BTab)
+            return 0
+            ;;
+        # Navigation (all official tmux aliases are supported)
+        Home|End|PageUp|PgUp|PPage|PageDown|PgDn|NPage)
+            return 0
+            ;;
+        # Editing (IC/DC abbreviations and full names are supported)
+        Insert|IC|Delete|DC)
+            return 0
+            ;;
+    esac
+    # Check functional keys F1-F12
+    if [[ "$arg" =~ ^F([1-9]|1[0-2])$ ]]; then
+        return 0
+    fi
+    # Check shortcuts like C-x, M-x, S-Up, C-M-x (Ctrl, Shift, Alt/Meta prefixes are supported)
+    if [[ "$arg" =~ ^[CMS]-[a-zA-Z0-9]+$ ]] || [[ "$arg" =~ ^C-M-[a-zA-Z0-9]+$ ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Read the dynamically negotiated SSH port
+if [ -f "$RUNTIME_DIR/ssh_port" ]; then
+    SSH_PORT=$(cat "$RUNTIME_DIR/ssh_port")
+else
+    SSH_PORT=2222
+fi
+
+# Path to SSH key
+if [ -n "${VM_SSH_KEY:-}" ]; then
+    SSH_KEY="$VM_SSH_KEY"
+else
+    SSH_KEY="$RUNTIME_DIR/id_rsa"
+fi
+
+# Check if key exists
+if [ ! -f "$SSH_KEY" ]; then
+    echo "Error: SSH key not found at path: $SSH_KEY"
+    echo "Make sure the virtual machine is running in the current project using the command: sbox-run"
+    exit 1
+fi
+
+SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i $SSH_KEY -p $SSH_PORT"
+
+# Command to automatically initialize a background tmux session 'shared' if it doesn't exist
+INIT_TMUX="tmux has-session -t shared 2>/dev/null || tmux new-session -d -s shared"
+
+# If launched without arguments — interactive login to tmux
+if [ $# -eq 0 ]; then
+    echo "=== Connecting to shared tmux session inside VM (port $SSH_PORT) ==="
+    TERM=xterm-256color ssh $SSH_OPTS user@127.0.0.1 -t "tmux attach-session -t shared || tmux new-session -s shared"
+    exit 0
+fi
+
+case "$1" in
+    --run|-r)
+        shift
+        if [ $# -eq 0 ]; then
+            echo "Error: Specify keys or text to send. Example: sbox-connect --run C-x C-f"
+            echo "Or to execute a command: sbox-connect --run 'ls -la'"
+            exit 1
+        fi
+
+        # Build a chain of tmux commands to execute in a single SSH request
+        TMUX_CMD=""
+
+        # If exactly one argument is passed, and it is not a special key,
+        # then we consider it a full console command (alsalib behavior)
+        # and automatically append Enter at the end.
+        if [ $# -eq 1 ] && ! is_key "$1"; then
+            TMUX_CMD="tmux send-keys -t shared -l $(printf '%q' "$1") ; tmux send-keys -t shared Enter"
+        else
+            for arg in "$@"; do
+                if [ -n "$TMUX_CMD" ]; then
+                    TMUX_CMD="$TMUX_CMD ; "
+                fi
+                if is_key "$arg"; then
+                    TMUX_CMD="$TMUX_CMD tmux send-keys -t shared $(printf '%q' "$arg")"
+                else
+                    TMUX_CMD="$TMUX_CMD tmux send-keys -t shared -l $(printf '%q' "$arg")"
+                fi
+            done
+        fi
+
+        # Ensure the shared session exists before sending keys
+        ssh $SSH_OPTS user@127.0.0.1 "$INIT_TMUX ; $TMUX_CMD"
+        ;;
+    --read|-p)
+        # Captures a snapshot of the current tmux pane's text screen and outputs it to host
+        # Ensure the shared session exists before taking a screenshot
+        ssh $SSH_OPTS user@127.0.0.1 "$INIT_TMUX ; tmux capture-pane -pt shared"
+        ;;
+    --exec|-e)
+        echo "Warning: --exec mode is temporarily disabled to prevent excessive resource limits consumption." >&2
+        exit 1
+        # if [ -z "${2:-}" ]; then
+        #     echo "Error: Specify command to execute. Example: sbox-connect --exec 'whoami'"
+        #     exit 1
+        # fi
+        # # Executes command directly in VM shell
+        # ssh $SSH_OPTS user@127.0.0.1 "$2"
+        # ;;
+    *)
+        echo "Unknown parameter: $1"
+        echo "Usage:"
+        echo "  sbox-connect                 - Interactive tmux login"
+        echo "  sbox-connect --run 'cmd'     - Print and execute command in tmux"
+        echo "  sbox-connect --read          - Read current tmux screen"
+        echo "  sbox-connect --exec 'cmd'    - Execute command directly in VM"
+        exit 1
+        ;;
+esac

@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Source the Sandbox (sbox) root directory discovery library
+source "${VM_DIR}/sbox-root"
+
+# Handle project initialization flag
+if [ "${1:-}" = "--init" ]; then
+    echo "================================================================"
+    echo "Initializing Sandbox (sbox) virtual machine root"
+    echo "Current directory: $PWD"
+    echo "================================================================"
+    
+    # Request explicit YES for safety
+    read -r -p "Are you sure you want to place the sbox root marker here? (Enter YES to confirm): " CONFIRM
+    if [ "$CONFIRM" = "YES" ]; then
+        touch "$PWD/.sbox-root"
+        echo "✅ Success: .sbox-root marker file successfully created!"
+        echo "You can now start the VM using the command: sbox-run"
+        exit 0
+    else
+        echo "Initialization cancelled."
+        exit 1
+    fi
+fi
+
+# Strict verification of project initialization (automatically exports PROJECT_DIR and RUNTIME_DIR)
+verify_project_initialization
+
+# Handle VM disk clean flag
+if [ "${1:-}" = "--clean" ]; then
+    if [ -f "$RUNTIME_DIR/nixos.qcow2" ]; then
+        echo "=== Cleaning persistent VM disk ==="
+        rm -f "$RUNTIME_DIR/nixos.qcow2"
+        echo "✅ Success: VM disk successfully removed. Next startup will be clean."
+    else
+        echo "VM disk is already empty."
+    fi
+    exit 0
+fi
+
+# Create runtime directory and a secure RW shared folder
+mkdir -p "$RUNTIME_DIR/shared"
+
+# Function to check port availability on host (ss is guaranteed to be injected via Nix)
+is_port_free() {
+    local port=$1
+    ! ss -tln | grep -q ":$port "
+}
+
+
+echo "=== 1. Negotiating network ports ==="
+SSH_PORT=2222
+MAX_PORT=2322 # Check at most 100 ports to prevent infinite loop
+
+while ! is_port_free "$SSH_PORT"; do
+    if [ "$SSH_PORT" -ge "$MAX_PORT" ]; then
+        echo "Error: Failed to find a free port in range 2222-${MAX_PORT}!" >&2
+        exit 1
+    fi
+    echo "Port $SSH_PORT is busy, checking $((SSH_PORT + 1))..."
+    SSH_PORT=$((SSH_PORT + 1))
+done
+echo "Selected free port for SSH: $SSH_PORT"
+echo "$SSH_PORT" > "$RUNTIME_DIR/ssh_port"
+
+
+echo "=== 2. Generating SSH keys ==="
+if [ ! -f "$RUNTIME_DIR/id_rsa" ]; then
+    echo "Generating a new SSH key pair..."
+    ssh-keygen -t rsa -b 2048 -f "$RUNTIME_DIR/id_rsa" -N ""
+else
+    echo "Using existing SSH keys."
+fi
+SSH_PUBLIC_KEY=$(cat "$RUNTIME_DIR/id_rsa.pub")
+
+echo "=== 3. Creating dynamic Nix configuration ==="
+HOST_UID=$(id -u)
+cat > "$RUNTIME_DIR/local-config.nix" <<EOF
+{
+  qemu-vm.sharedDir = "${RUNTIME_DIR}/shared";
+  qemu-vm.hostUid = ${HOST_UID};
+  qemu-vm.sshPort = ${SSH_PORT};
+  qemu-vm.sshPublicKey = "${SSH_PUBLIC_KEY}";
+}
+EOF
+
+echo "=== 4. Resolving project configuration ==="
+if [ -z "${SBOX_CONFIG_NIX:-}" ]; then
+    echo "💡 Hint: The SBOX_CONFIG_NIX environment variable is not set."
+    echo "   You can customize VM resources, packages, and services by creating a Nix config file"
+    echo "   and exporting the path to it in your development environment:"
+    echo "     export SBOX_CONFIG_NIX=\"./vm.nix\""
+    echo "   Now launching the standard/basic VM configuration."
+    SBOX_CONFIG_NIX="${VM_DIR}/empty-vm.nix"
+fi
+
+# If path is relative, make it absolute relative to PROJECT_DIR
+if [[ "$SBOX_CONFIG_NIX" != /* ]]; then
+    SBOX_CONFIG_NIX="$PROJECT_DIR/$SBOX_CONFIG_NIX"
+fi
+
+if [ -f "$SBOX_CONFIG_NIX" ]; then
+    echo "✅ Using configuration file:"
+    echo "   $SBOX_CONFIG_NIX"
+else
+    echo "❌ Error: Configuration file not found:" >&2
+    echo "   $SBOX_CONFIG_NIX" >&2
+    exit 1
+fi
+
+echo "=== 5. Building NixOS virtual machine ==="
+nix-build -o "$RUNTIME_DIR/result" -E "
+  import <nixpkgs/nixos> {
+    configuration = { ... }: {
+      imports = [
+        # Import dynamic parameters
+        (builtins.path { path = \"$RUNTIME_DIR/local-config.nix\"; })
+        
+        # Import core contract
+        (builtins.path { path = \"${VM_DIR}/core-contract.nix\"; })
+        
+        # Import default configuration overrides
+        (builtins.path { path = \"${VM_DIR}/default-config.nix\"; })
+        
+        # Import local project configuration
+        (builtins.path { path = \"$SBOX_CONFIG_NIX\"; })
+      ];
+    };
+  }
+" -A config.system.build.vm
+
+echo "=== 6. Starting QEMU virtual machine ==="
+REAL_VM_PATH=$(readlink -f "$RUNTIME_DIR/result/bin/run-nixos-vm")
+echo "🚀 VM runner executable (Nix Store):"
+echo "   $REAL_VM_PATH"
+echo "💾 VM virtual disk:"
+echo "   $RUNTIME_DIR/nixos.qcow2"
+echo "📂 Local shared folder (Read-Write):"
+echo "   $RUNTIME_DIR/shared"
+echo "📝 Boot log available at: .sbox-runtime/vm_boot.log"
+echo "🔌 To connect run: sbox-connect"
+
+# Set disk path inside the runtime directory to avoid polluting the project root
+export NIX_DISK_IMAGE="$RUNTIME_DIR/nixos.qcow2"
+
+# Start the VM and tee its output to log file
+exec "$RUNTIME_DIR/result/bin/run-nixos-vm" 2>&1 | tee "$RUNTIME_DIR/vm_boot.log"
