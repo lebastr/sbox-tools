@@ -50,7 +50,7 @@ case "$1" in
         fi
 
         if [[ "$1" != "-l" && "$1" != "-K" ]]; then
-            set -- $@ "-K" "Enter"
+            set -- "$@" "-K" "Enter"
         fi
 
         targ="-l" # default mode is literal (-l)
@@ -60,7 +60,7 @@ case "$1" in
                 targ="-l"
                 continue
             elif [ "$arg" = "-K" ]; then
-                targ="-K"
+                targ=""
                 continue
             fi
 
