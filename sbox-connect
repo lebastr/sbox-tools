@@ -49,6 +49,10 @@ case "$1" in
             exit 1
         fi
 
+        if [[ "$1" != "-l" && "$1" != "-K" ]]; then
+            set -- $@ "-K" "Enter"
+        fi
+
         targ="-l" # default mode is literal (-l)
         TMUX_CMD=""
         for arg in "$@"; do
@@ -60,7 +64,7 @@ case "$1" in
                 continue
             fi
 
-            TMUX_CMD="${TMUX_CMD}tmux send-keys -t shared $targ -- $(printf \'%q\' "$arg"); "
+            TMUX_CMD="${TMUX_CMD}tmux send-keys -t shared $targ -- $(printf '%q' "$arg"); "
         done
 
         # Ensure the shared session exists before sending keys
